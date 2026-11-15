@@ -1,6 +1,6 @@
 # MediaCall
 
-One-to-one WebRTC video and audio calls with an integrated, from-scratch TURN server. 
+One-to-one WebRTC video and audio calls with an integrated, from-scratch TURN server.
 
 ## Run Locally
 
@@ -106,14 +106,6 @@ npm run test:call
 The server suite uses real UDP, TCP, and TLS sockets, the RFC 5769 integrity/fingerprint vector, forged-auth/unsigned-attribute cases, permission enforcement, quota checks, two-member room policy, and authenticated production APIs. OpenSSL is required to generate the ephemeral self-signed TLS test fixture; no test private key is committed.
 
 Playwright uses two independent Chromium contexts with synthetic camera/microphone devices. It checks direct video, UDP-only forced TURN video, TCP-only forced TURN video, decoded audio without camera capture, relay enforcement when the guest chooses it, media controls, track replacement, hangup, permission errors, and fixed desktop/mobile/narrow viewports. Selected ICE pairs and media screenshots are attached to the test results. Screen-share replacement is tested with a canvas capture stream, not the operating system's native share picker.
-
-## Limits And Comparison
-
-The improvements here are an integrated call workflow, a one-command app/relay setup, a visible relay-only control, short-lived credentials, and an operational UI. There is **no claim of better throughput, latency, security, or protocol coverage than coturn**.
-
-Not implemented: IPv6/RFC 6156, TCP peer allocations/RFC 6062, even-port reservations, mobility, MESSAGE-INTEGRITY-SHA256/USERHASH, OAuth, multi-region routing, persistent account authentication, horizontal signaling scale, recording, and multi-party calls. Media is DTLS-SRTP-encrypted between browsers; TURN forwards opaque packets. The signaling server is trusted for SDP/fingerprint exchange, and participants are not cryptographically identity-verified.
-
-Before replacing coturn in a public deployment, add independent interoperability/security review, parser fuzzing, NAT/firewall testing across real networks and browsers, abuse controls, and comparative sustained-load measurements. Current browser verification is Chromium on localhost, not certification across Safari/Firefox or hostile networks.
 
 ## Code
 
