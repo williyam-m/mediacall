@@ -3,7 +3,7 @@ import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 type InstrumentedWindow = Window & { testConnections: RTCPeerConnection[] };
 
-async function contextWithMedia(browser: Browser, clientTransport?: 'udp' | 'tcp') {
+async function contextWithMedia(browser: Browser, clientTransport?: 'udp' | 'tcp' | 'direct') {
   const context = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1440, height: 900 } });
   await context.addInitScript(() => {
     const original = window.RTCPeerConnection;
@@ -16,7 +16,7 @@ async function contextWithMedia(browser: Browser, clientTransport?: 'udp' | 'tcp
   if (clientTransport) await context.route('**/api/ice', async (route) => {
     const response = await route.fetch();
     const body = await response.json() as { iceServers: RTCIceServer[]; expiresAt: number };
-    body.iceServers = body.iceServers.flatMap((server) => {
+    body.iceServers = clientTransport === 'direct' ? [] : body.iceServers.flatMap((server) => {
       const urls = (Array.isArray(server.urls) ? server.urls : [server.urls]).filter((url) => url.startsWith('turn:') && url.endsWith(`?transport=${clientTransport}`));
       return urls.length ? [{ ...server, urls }] : [];
     });
@@ -47,7 +47,7 @@ async function selectedPair(page: Page) {
 async function connectPair(browser: Browser, mode: 'auto' | 'relay', audio = false, tcpOnly = false, guestForce = false) {
   const contexts: BrowserContext[] = [];
   try {
-    const clientTransport = mode === 'relay' ? (tcpOnly ? 'tcp' : 'udp') : undefined;
+    const clientTransport = mode === 'relay' ? (tcpOnly ? 'tcp' : 'udp') : guestForce ? undefined : 'direct';
     const firstContext = await contextWithMedia(browser, clientTransport);
     contexts.push(firstContext);
     const secondContext = await contextWithMedia(browser, clientTransport);

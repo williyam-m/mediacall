@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { TurnAuth, validAccessToken } from './auth.ts';
-import { TokenBucket } from '../limits.ts';
+import { TurnAuth, validAccessToken } from '../../../../src/server/custom-turn/auth.ts';
+import { TokenBucket } from '../../../../src/server/http/limits.ts';
 
 test('issues temporary REST credentials compatible with TURN long-term authentication', () => {
   const auth = new TurnAuth('test-secret', 'mediacall');

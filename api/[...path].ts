@@ -1,0 +1,1 @@
+export { proxyCallApi as default } from '../src/server/hosted/proxy.ts';

@@ -6,8 +6,8 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { WebSocket } from 'ws';
 import test from 'node:test';
-import { SignalingServer } from './signaling.ts';
-import type { ServerSignal } from '../shared/types.ts';
+import { SignalingServer } from '../../../../src/server/signaling/websocket.ts';
+import type { ServerSignal } from '../../../../src/shared/types.ts';
 
 test('signaling enforces access, two peers, room policy, forwarding, and cleanup', { timeout: 10_000 }, async (context) => {
   const http = createServer();

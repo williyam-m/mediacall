@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CallMode, ClientSignal, IceConfig, MediaState, PeerInfo, ServerSignal } from '../shared/types.ts';
+import type { CallMode, ClientSignal, IceConfig, MediaState, PeerInfo, ServerSignal } from '../../shared/types.ts';
+import { createSignalingConnection } from '../signaling/connection.ts';
+import type { SignalingConnection } from '../signaling/connection.ts';
 
 export type CallStatus = 'idle' | 'preparing' | 'waiting' | 'connecting' | 'connected' | 'reconnecting' | 'ended' | 'error';
 
@@ -11,6 +13,10 @@ export interface ConnectionStats {
   loss: number;
   resolution: string;
   codec: string;
+  localCandidateType: string;
+  remoteCandidateType: string;
+  bytesSent: number;
+  bytesReceived: number;
 }
 
 interface StartOptions {
@@ -32,7 +38,7 @@ interface Session {
   restarts: number;
 }
 
-const EMPTY_STATS: ConnectionStats = { route: 'pending', protocol: '--', rtt: 0, bitrate: 0, loss: 0, resolution: '--', codec: '--' };
+const EMPTY_STATS: ConnectionStats = { route: 'pending', protocol: '--', rtt: 0, bitrate: 0, loss: 0, resolution: '--', codec: '--', localCandidateType: '--', remoteCandidateType: '--', bytesSent: 0, bytesReceived: 0 };
 
 export async function fetchIce(accessToken: string): Promise<IceConfig> {
   const response = await fetch('/api/ice', { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}, cache: 'no-store' });
@@ -94,7 +100,7 @@ export function useCall() {
   const local = useRef<MediaStream | null>(null);
   const display = useRef<MediaStream | null>(null);
   const connection = useRef<RTCPeerConnection | null>(null);
-  const socket = useRef<WebSocket | null>(null);
+  const socket = useRef<SignalingConnection | null>(null);
   const session = useRef<Session | null>(null);
   const pendingIce = useRef<RTCIceCandidateInit[]>([]);
   const localMedia = useRef<MediaState>({ audio: true, video: true, sharing: false });
@@ -206,7 +212,9 @@ export function useCall() {
     if (!current || !active) return;
     setError(null);
     setStatus('reconnecting');
-    active.ice = await fetchIce(active.token);
+    const refreshed = await fetchIce(active.token);
+    if (refreshed.signalingTransport === 'metered' && !refreshed.iceServers.length) refreshed.iceServers = active.ice.iceServers;
+    active.ice = refreshed;
     if (connection.current !== current) return;
     current.setConfiguration({ iceServers: active.ice.iceServers, iceTransportPolicy: active.mode === 'relay' ? 'relay' : 'all' });
     await offer(true);
@@ -336,12 +344,12 @@ export function useCall() {
       const ice = await fetchIce(options.accessToken);
       if (generation.current !== currentGeneration) return;
       session.current = { ice, mode: options.mode, polite: false, token: options.accessToken, makingOffer: false, ignoreOffer: false, settingAnswer: false, restarts: 0 };
-      const websocket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/signal`);
+      const websocket = createSignalingConnection(ice);
       socket.current = websocket;
       let queue = Promise.resolve();
       const joinTimeout = setTimeout(() => { if (socket.current === websocket) fail(new Error('Signaling timed out. Check the server connection.')); }, 12_000);
       websocket.onopen = () => { send({ type: 'join', ...options }); };
-      websocket.onmessage = (event: MessageEvent<string>) => {
+      websocket.onmessage = (event) => {
         if (socket.current !== websocket) return;
         clearTimeout(joinTimeout);
         queue = queue.then(async () => {
@@ -457,22 +465,38 @@ export function useCall() {
 
   async function testRelay(accessToken: string) {
     const ice = await fetchIce(accessToken);
-    const probe = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: 'relay' });
+    let signaling: SignalingConnection | undefined;
+    let probe: RTCPeerConnection | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      if (ice.signalingTransport === 'metered') {
+        signaling = createSignalingConnection(ice);
+        await new Promise<void>((resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Managed relay setup timed out. Check the signing key and TURN injection setting.')), 12_000);
+          signaling!.onopen = () => signaling!.send(JSON.stringify({ type: 'join', roomId: crypto.randomUUID().replaceAll('-', ''), name: 'Relay probe', mode: 'relay', accessToken } satisfies ClientSignal));
+          signaling!.onmessage = (event) => {
+            const message = JSON.parse(event.data) as ServerSignal;
+            if (message.type === 'joined') { clearTimeout(timer); resolve(); }
+            else if (message.type === 'error') { clearTimeout(timer); reject(new Error(message.message)); }
+          };
+          signaling!.onerror = signaling!.onclose = () => { clearTimeout(timer); reject(new Error('Unable to connect to managed signaling.')); };
+        });
+      }
+      const currentProbe = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: 'relay' });
+      probe = currentProbe;
       const result = new Promise<string>((resolve, reject) => {
         timer = setTimeout(() => reject(new Error('No relay candidate. Check the TURN host, credentials, and firewall.')), 10_000);
-        probe.onicecandidate = (event) => {
+        currentProbe.onicecandidate = (event) => {
           if (event.candidate?.type === 'relay') {
             clearTimeout(timer);
             resolve(`${event.candidate.address}:${event.candidate.port} / ${event.candidate.protocol?.toUpperCase() ?? 'UDP'}`);
           }
         };
       });
-      probe.createDataChannel('allocation-test');
-      await probe.setLocalDescription(await probe.createOffer());
+      currentProbe.createDataChannel('allocation-test');
+      await currentProbe.setLocalDescription(await currentProbe.createOffer());
       return await result;
-    } finally { if (timer) clearTimeout(timer); probe.close(); }
+    } finally { if (timer) clearTimeout(timer); probe?.close(); signaling?.close(); }
   }
 
   useEffect(() => {
@@ -522,8 +546,13 @@ export function useCall() {
         const previous = previousBytes.current;
         const bitrate = previous.time && bytes >= previous.bytes ? (bytes - previous.bytes) * 8 / (now - previous.time) : 0;
         previousBytes.current = { time: now, bytes };
-        setStats({ route, protocol: String(candidate?.relayProtocol ?? candidate?.protocol ?? '--').toUpperCase(), rtt: Number(pair?.['currentRoundTripTime'] ?? 0) * 1000, bitrate, loss: received + lost ? lost / (received + lost) * 100 : 0, resolution, codec });
-        if (route !== 'pending' && route !== reportedRoute.current) { reportedRoute.current = route; log(route === 'relay' ? 'Media routed through custom TURN' : 'Direct peer connection selected'); }
+        setStats({
+          route, protocol: String(candidate?.relayProtocol ?? candidate?.protocol ?? '--').toUpperCase(), rtt: Number(pair?.['currentRoundTripTime'] ?? 0) * 1000,
+          bitrate, loss: received + lost ? lost / (received + lost) * 100 : 0, resolution, codec,
+          localCandidateType: String(candidate?.candidateType ?? '--'), remoteCandidateType: String(remoteCandidate?.candidateType ?? '--'),
+          bytesSent: Number(pair?.['bytesSent'] ?? 0), bytesReceived: Number(pair?.['bytesReceived'] ?? 0),
+        });
+        if (route !== 'pending' && route !== reportedRoute.current) { reportedRoute.current = route; log(route === 'relay' ? 'Media routed through TURN relay' : 'Direct peer connection selected'); }
       } catch {}
     }, 1000);
     return () => clearInterval(timer);

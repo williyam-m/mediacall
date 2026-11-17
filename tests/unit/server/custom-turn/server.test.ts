@@ -9,9 +9,9 @@ import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
-import { TurnServer, allowedPeer } from './server.ts';
-import { Attr, attribute, decodeMessage, decodeXorAddress, encodeMessage, encodeXorAddress, uint32, verifyIntegrity } from './protocol.ts';
-import type { Attribute, StunMessage } from './protocol.ts';
+import { TurnServer, allowedPeer } from '../../../../src/server/custom-turn/server.ts';
+import { Attr, attribute, decodeMessage, decodeXorAddress, encodeMessage, encodeXorAddress, uint32, verifyIntegrity } from '../../../../src/server/custom-turn/protocol.ts';
+import type { Attribute, StunMessage } from '../../../../src/server/custom-turn/protocol.ts';
 
 class Packets {
   private stored: Buffer[] = [];

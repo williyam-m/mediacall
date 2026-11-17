@@ -1,0 +1,9 @@
+.git/
+.env
+.env.local
+.env.production
+node_modules/
+dist/
+test-results/
+playwright-report/
+tests/

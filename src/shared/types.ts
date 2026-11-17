@@ -32,22 +32,26 @@ export interface AppConfig {
   requiresAccessToken: boolean;
   turnUrls: string[];
   stunUrl: string;
+  defaultMode?: CallMode;
+  relay?: { name: string; host: string; managed: boolean; version: string };
 }
 
 export interface IceConfig {
   iceServers: RTCIceServer[];
   expiresAt: number;
+  signalingUrl?: string;
+  signalingTransport?: 'http' | 'metered';
 }
 
 export interface RelayStats {
   status: string;
-  activeAllocations: number;
-  maxAllocations: number;
-  uptimeSeconds: number;
+  activeAllocations: number | null;
+  maxAllocations: number | null;
+  uptimeSeconds: number | null;
   transports: string[];
-  created: number;
-  bytesToPeer: number;
-  bytesToClient: number;
-  dropped: number;
-  authFailures: number;
+  created: number | null;
+  bytesToPeer: number | null;
+  bytesToClient: number | null;
+  dropped: number | null;
+  authFailures: number | null;
 }

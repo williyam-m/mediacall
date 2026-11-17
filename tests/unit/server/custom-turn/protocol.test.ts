@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { Attr, attribute, decodeMessage, decodeXorAddress, encodeMessage, encodeXorAddress, verifyFingerprint, verifyIntegrity } from './protocol.ts';
+import { Attr, attribute, decodeMessage, decodeXorAddress, encodeMessage, encodeXorAddress, verifyFingerprint, verifyIntegrity } from '../../../../src/server/custom-turn/protocol.ts';
 
 test('verifies the RFC 5769 STUN request, including nonzero attribute padding', () => {
   const packet = Buffer.from(

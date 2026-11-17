@@ -5,10 +5,10 @@ import { stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { TurnServer } from './turn/server.ts';
-import { validAccessToken } from './turn/auth.ts';
-import { SignalingServer } from './signaling.ts';
-import { IpLimiter } from './limits.ts';
+import { TurnServer } from './custom-turn/server.ts';
+import { validAccessToken } from './custom-turn/auth.ts';
+import { SignalingServer } from './signaling/websocket.ts';
+import { IpLimiter } from './http/limits.ts';
 
 const production = process.argv.includes('--production');
 const env = process.env;

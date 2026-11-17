@@ -4,7 +4,7 @@ import net from 'node:net';
 import type { Server as TcpServer, Socket as TcpSocket } from 'node:net';
 import tls from 'node:tls';
 import { TurnAuth } from './auth.ts';
-import { IpLimiter, TokenBucket } from '../limits.ts';
+import { IpLimiter, TokenBucket } from '../http/limits.ts';
 import { Attr, attribute, decodeMessage, decodeXorAddress, encodeMessage, encodeXorAddress, errorValue, uint32, verifyFingerprint, verifyIntegrity } from './protocol.ts';
 import type { Address, Attribute, StunMessage } from './protocol.ts';
 
@@ -49,7 +49,7 @@ interface Allocation {
   bandwidth: TokenBucket;
 }
 
-const SOFTWARE: Attribute = { type: Attr.SOFTWARE, value: Buffer.from('MediaCall Relay/0.1') };
+const SOFTWARE: Attribute = { type: Attr.SOFTWARE, value: Buffer.from('custom-turn/0.1') };
 const REQUIRED_ATTRIBUTES = new Set<number>([
   Attr.USERNAME, Attr.MESSAGE_INTEGRITY, Attr.REALM, Attr.NONCE, Attr.REQUESTED_TRANSPORT,
   Attr.LIFETIME, Attr.XOR_PEER_ADDRESS, Attr.CHANNEL_NUMBER, Attr.DATA,

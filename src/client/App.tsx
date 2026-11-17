@@ -5,7 +5,7 @@ import {
   Link2, LoaderCircle, Maximize2, Mic, MicOff, Minimize2, MonitorUp, Network, PhoneOff,
   RefreshCw, Route, Server, Settings2, ShieldCheck, Signal, Video, VideoOff, Volume2, X,
 } from 'lucide-react';
-import { useCall } from './useCall.ts';
+import { useCall } from './hooks/useCall.ts';
 import type { CallMode, AppConfig, RelayStats } from '../shared/types.ts';
 
 function IconButton({ label, children, active = false, danger = false, className = '', ...props }:
@@ -47,12 +47,14 @@ function Modal({ title, children, onClose, wide = false }: { title: string; chil
   </dialog>;
 }
 
-function formatDuration(seconds: number) {
+function formatDuration(seconds: number | null) {
+  if (seconds === null) return '--';
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-function formatBytes(bytes: number) {
+function formatBytes(bytes: number | null) {
+  if (bytes === null) return '--';
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
   return `${(bytes / 1000).toFixed(1)} KB`;
 }
@@ -100,10 +102,20 @@ export default function App() {
   const route = call.stats.route === 'pending' ? 'Not connected' : call.stats.route === 'relay' ? 'TURN relay' : 'Peer-to-peer';
   const hasCamera = Boolean(call.localStream?.getVideoTracks().some((track) => track.readyState === 'live') && call.cameraEnabled);
   const selectedPolicy = active ? call.mode : policy;
+  const providerName = config?.relay?.name ?? 'custom-turn';
+  const providerVersion = config?.relay?.version ?? '0.1';
 
   useEffect(() => {
-    fetch('/api/config').then((response) => { if (!response.ok) throw new Error('Server unavailable'); return response.json() as Promise<AppConfig>; })
-      .then(setConfig).catch(() => setNotice('Unable to load the call server.'));
+    fetch('/api/config', { cache: 'no-store' }).then(async (response) => {
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Unable to load the call server.');
+      }
+      return response.json() as Promise<AppConfig>;
+    }).then((configuration) => {
+      setConfig(configuration);
+      if (configuration.defaultMode) setPolicy(configuration.defaultMode);
+    }).catch((cause: unknown) => setNotice(cause instanceof Error ? cause.message : 'Unable to load the call server.'));
   }, []);
 
   useEffect(() => {
@@ -292,8 +304,8 @@ export default function App() {
             <div className="network-details"><div><span>ICE policy</span><strong>{selectedPolicy === 'relay' ? 'Relay only' : 'All candidates'}</strong></div>
               <div><span>Media security</span><strong>{call.status === 'connected' ? 'DTLS-SRTP' : '--'}</strong></div>
               <div><span>Packet loss</span><strong>{call.stats.route === 'pending' ? '--' : `${call.stats.loss.toFixed(1)}%`}</strong></div></div>
-            <div className="relay-identity"><div className="relay-symbol"><Server size={19} /></div><div><strong>MediaCall Relay<span className="version-tag">0.1</span></strong><span>{config?.turnUrls[0]?.replace('turn:', '').split('?')[0] ?? 'Connecting...'}</span></div><span className={`status-dot ${serverOnline ? 'online' : ''}`} /></div>
-            <div className="relay-summary"><span>ALLOCATIONS <strong>{relay ? `${relay.activeAllocations} / ${relay.maxAllocations}` : '--'}</strong></span><span>TRANSPORT <strong>{relay?.transports.map((transport) => transport.toUpperCase()).join(' / ') ?? '--'}</strong></span></div>
+            <div className="relay-identity"><div className="relay-symbol"><Server size={19} /></div><div><strong>{providerName}<span className="version-tag">{providerVersion}</span></strong><span>{config?.relay?.host ?? config?.turnUrls[0]?.replace('turn:', '').split('?')[0] ?? 'Connecting...'}</span></div><span className={`status-dot ${serverOnline ? 'online' : ''}`} /></div>
+            <div className="relay-summary"><span>{config?.relay?.managed ? 'PROVIDER' : 'ALLOCATIONS'} <strong>{config?.relay?.managed ? 'Hosted TURN' : relay?.activeAllocations != null ? `${relay.activeAllocations} / ${relay.maxAllocations}` : '--'}</strong></span><span>TRANSPORT <strong>{relay?.transports.map((transport) => transport.toUpperCase()).join(' / ') ?? '--'}</strong></span></div>
             <button className="text-button probe-button" disabled={probeState === 'testing' || !serverOnline} onClick={probeRelay}>
               {probeState === 'testing' ? <LoaderCircle className="spin" size={15} /> : <FlaskConical size={15} />}{probeState === 'testing' ? 'Testing allocation...' : 'Test relay'}<ArrowRight size={14} /></button>
             {probeState !== 'idle' && probeState !== 'testing' && <div className={`probe-result ${probeState}`} role="status"><span>{probeState === 'success' ? 'Relay allocated' : 'Allocation failed'}</span><code>{probeResult}</code></div>}
@@ -302,7 +314,7 @@ export default function App() {
         </aside>
       </div>
 
-      <footer className="workspace-footer"><span><span className="footer-mark" /> MediaCall <span className="footer-divider">/</span> Personal workspace</span><span><ShieldCheck size={13} /> WebRTC <span className="footer-divider">/</span> Custom TURN</span></footer>
+      <footer className="workspace-footer"><span><span className="footer-mark" /> MediaCall <span className="footer-divider">/</span> Personal workspace</span><span><ShieldCheck size={13} /> WebRTC <span className="footer-divider">/</span> {config?.relay?.managed ? 'Hosted TURN' : 'custom-turn'}</span></footer>
     </main>
 
     {joinOpen && <Modal title="Join a call" onClose={() => setJoinOpen(false)}><form onSubmit={(event) => { event.preventDefault(); join(); }}>
@@ -324,11 +336,11 @@ export default function App() {
     </Modal>}
 
     {consoleOpen && <Modal title="Relay console" onClose={() => setConsoleOpen(false)} wide>
-      <div className="console-server"><span className="relay-symbol"><Server size={22} /></span><div><h3>MediaCall Relay</h3><span>Version 0.1 <span className="footer-divider">/</span> IPv4</span></div><span className="experimental-tag">Experimental</span></div>
-      <div className="console-metrics"><div><span>ACTIVE ALLOCATIONS</span><strong>{relay?.activeAllocations ?? '--'}<small> / {relay?.maxAllocations ?? '--'}</small></strong></div>
-        <div><span>TO PEERS</span><strong>{relay ? formatBytes(relay.bytesToPeer) : '--'}</strong></div><div><span>TO CLIENTS</span><strong>{relay ? formatBytes(relay.bytesToClient) : '--'}</strong></div></div>
+      <div className="console-server"><span className="relay-symbol"><Server size={22} /></span><div><h3>{providerName}</h3><span>{config?.relay?.managed ? 'Managed service' : `Version ${providerVersion}`} <span className="footer-divider">/</span> IPv4</span></div><span className="experimental-tag">{config?.relay?.managed ? 'Managed' : 'Experimental'}</span></div>
+      <div className="console-metrics"><div><span>{config?.relay?.managed ? 'ICE POLICY' : 'ACTIVE ALLOCATIONS'}</span><strong>{config?.relay?.managed ? selectedPolicy === 'relay' ? 'Relay only' : 'Automatic' : <>{relay?.activeAllocations ?? '--'}<small> / {relay?.maxAllocations ?? '--'}</small></>}</strong></div>
+        <div><span>{config?.relay?.managed ? 'SESSION SENT' : 'TO PEERS'}</span><strong>{config?.relay?.managed ? formatBytes(call.stats.bytesSent) : relay ? formatBytes(relay.bytesToPeer) : '--'}</strong></div><div><span>{config?.relay?.managed ? 'SESSION RECEIVED' : 'TO CLIENTS'}</span><strong>{config?.relay?.managed ? formatBytes(call.stats.bytesReceived) : relay ? formatBytes(relay.bytesToClient) : '--'}</strong></div></div>
       <div className="console-section"><h3>Relay listeners</h3>{config?.turnUrls.map((url) => <div className="listener-row" key={url}><span className="status-dot online" /><code>{url}</code><span>{url.startsWith('turns:') ? 'TLS' : url.endsWith('tcp') ? 'TCP' : 'UDP'}</span></div>)}</div>
-      <div className="console-section"><h3>Current connection</h3><div className="console-connection"><span>Route<strong>{route}</strong></span><span>Protocol<strong>{call.stats.protocol}</strong></span><span>Incoming bitrate<strong>{Math.round(call.stats.bitrate)} kbps</strong></span><span>Video<strong>{call.stats.resolution} {call.stats.codec !== '--' ? `/ ${call.stats.codec}` : ''}</strong></span></div></div>
+      <div className="console-section"><h3>Current connection</h3><div className="console-connection"><span>Route<strong>{route}</strong></span><span>Protocol<strong>{call.stats.protocol}</strong></span><span>ICE candidate pair<strong data-testid="ice-candidate-pair">{call.stats.localCandidateType} / {call.stats.remoteCandidateType}</strong></span><span>ICE policy<strong>{selectedPolicy === 'relay' ? 'Relay only' : 'All candidates'}</strong></span><span>Incoming bitrate<strong>{Math.round(call.stats.bitrate)} kbps</strong></span><span>Video<strong>{call.stats.resolution} {call.stats.codec !== '--' ? `/ ${call.stats.codec}` : ''}</strong></span></div></div>
       <div className="console-section"><h3>Session activity</h3>{call.events.length ? <div className="activity-list">{call.events.map((entry) => <div key={entry.id}><span className="activity-point" /><span>{entry.text}</span><time>{new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div>)}</div> : <div className="empty-activity"><AudioLines size={18} />No session activity</div>}</div>
       <div className="console-bottom"><span>UPTIME <strong>{relay ? formatDuration(relay.uptimeSeconds) : '--'}</strong> <span className="footer-divider">/</span> DROPPED <strong>{relay?.dropped ?? '--'}</strong></span>
         <button className="text-button" onClick={probeRelay} disabled={probeState === 'testing'}><FlaskConical size={16} />{probeState === 'testing' ? 'Testing...' : 'Test allocation'}</button></div>

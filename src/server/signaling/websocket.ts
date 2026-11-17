@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto';
 import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
-import { IpLimiter, TokenBucket } from './limits.ts';
-import { validAccessToken } from './turn/auth.ts';
-import type { CallMode, MediaState, PeerInfo, ServerSignal } from '../shared/types.ts';
+import { IpLimiter, TokenBucket } from '../http/limits.ts';
+import { validAccessToken } from '../custom-turn/auth.ts';
+import type { CallMode, MediaState, PeerInfo, ServerSignal } from '../../shared/types.ts';
 
 interface Member {
   socket: WebSocket;
