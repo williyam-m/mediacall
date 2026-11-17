@@ -19,6 +19,7 @@ interface HostedApiOptions {
   realtime?: MeteredSigningOptions;
   realtimeOrigin?: string;
   provideToken?: (peer: { roomId: string; name: string; mode: 'auto' | 'relay' }) => Promise<MeteredConnectToken>;
+  defaultMode?: 'auto' | 'relay';
 }
 
 function json(response: ServerResponse, status: number, body: unknown) {
@@ -76,7 +77,7 @@ export function createHostedApi(options: HostedApiOptions) {
       }
       if (url.pathname === '/api/config') {
         json(response, 200, {
-          requiresAccessToken: Boolean(options.accessToken), turnUrls: [], stunUrl: '', defaultMode: 'auto',
+          requiresAccessToken: Boolean(options.accessToken), turnUrls: [], stunUrl: '', defaultMode: options.defaultMode ?? 'auto',
           relay: { name: 'Metered Open Relay', host: options.realtime ? 'rms.metered.ca' : options.turn!.domain, managed: true, version: 'Hosted' },
         } satisfies AppConfig);
         return;
