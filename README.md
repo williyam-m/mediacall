@@ -1,118 +1,159 @@
 # MediaCall
 
-One-to-one WebRTC video and audio calls with an integrated, from-scratch TURN server.
+**Live application: https://mediacall-six.vercel.app**
 
-## Run Locally
+**Source: https://github.com/williyam-m/mediacall**
 
-Requires Node.js **22.18+** and npm.
+A one-to-one WebRTC audio/video application with explicit ICE policy controls, a from-scratch IPv4 TURN implementation named **custom-turn**, a Metered Open Relay hosted deployment, and real-time connection diagnostics.
+
+**Automatic ICE is the default.** Force TURN is an explicit selection. If either participant requests Force TURN, both use `iceTransportPolicy: 'relay'` before media negotiation. The public Vercel deployment uses Metered Open Relay, not the repository's custom UDP server.
+
+## Features
+
+| Area | Implemented behavior |
+| --- | --- |
+| Calls | One-to-one video or microphone-only calls, random room IDs, copyable same-origin invites, waiting/connecting/reconnecting/ended states |
+| ICE | Automatic (`all`) by default, explicit Force TURN (`relay`), either participant can enforce relay-only negotiation, selected route shown from getStats |
+| Media controls | Mute/unmute, camera off/on, camera/microphone selection, device refresh, preview, fullscreen, browser screen-share video, restore camera on share stop |
+| Media safety | Browser permissions, HTTPS requirement outside localhost, no camera capture for audio-only calls, track cleanup on leave/unmount, audio autoplay recovery action |
+| Recovery | Polite/impolite negotiation roles, queued trickle ICE, bounded ICE restart attempts, manual reconnect action, actionable permission/provider errors |
+| Hosted backend | Vercel UI/API plus official Metered signaling SDK, short-lived room-scoped tokens, automatically injected hosted TURN, no always-on laptop or database required |
+| Local startup | `--turn custom-turn` or `--turn metered`, optional `--configure`, HTTP/TURN/relay-range flags, `--ice auto|relay`, validated environment overrides |
+| custom-turn | STUN Binding; authenticated Allocate/Refresh; CreatePermission; ChannelBind; Send/Data indications; ChannelData; UDP/TCP/optional TLS client transports; UDP relay sockets |
+| Relay controls | Temporary credentials, signed IP-bound nonces, integrity/fingerprint validation, replayed transaction responses, allocation/permission/channel expiry, quotas and byte limits |
+| Relay console | Actual selected local/remote candidate IP and allocated port, ICE and client-to-TURN protocols, listener URL, related endpoints, candidate pair, nomination and connection states |
+| Relay location | Approximate city/region/country, ASN and organization via bounded cached HTTPS GeoIP; local/reserved addresses stay local; missing data is labelled, not invented |
+| Live stats | One-second inbound/outbound RTP bitrate, RTT, jitter, cumulative loss, FPS, codecs, resolution, packet/frame counts, bandwidth estimate, session bytes, 60-sample chart |
+| Export | JSON snapshot of stats/history and network metadata, without SDP/media/TURN credentials/signing secrets |
+| UI | Responsive desktop/mobile workspace, scrollable relay console with persistent close control, tooltips, real microphone activity |
+| Alternate infrastructure | Persistent local WebSocket rooms, alternate hosted HTTP/PostgreSQL rooms, fixed external-backend proxy |
+| Tests | Separate unit, socket, local browser and public live suites; synthetic media and credential-safe test fixtures |
+
+## Quick Start
+
+Requires **Node.js 22.18+** and npm.
 
 ```sh
 npm ci
-npm run dev
+npm run dev -- --turn custom-turn
 ```
 
-Open **http://localhost:5180**. Enter your name, create a call, and open the invite in another tab or browser. The local TURN listener uses **3490 UDP/TCP** to avoid conflicts with standard TURN services. Both signaling and the web app use port 5180.
-
-Localhost links and a localhost relay only work on the same machine. Calls between different devices require the deployment configuration below. Camera and microphone access require HTTPS outside localhost.
-
-## Call Modes
-
-- **Automatic:** `iceTransportPolicy: 'all'`. WebRTC can select a direct host/server-reflexive candidate or fall back to the custom TURN relay. ICE chooses the working candidate pair; direct routing is not assumed.
-- **Force TURN:** `iceTransportPolicy: 'relay'` on **both** browsers. If either participant selects it, the room becomes relay-only before negotiation. There is no silent direct fallback when the relay is unavailable.
-- **Audio call:** captures only the microphone. A negotiated video transceiver remains available for screen sharing without recapturing the camera.
-
-Mute, camera toggle, device selection, screen sharing, fullscreen, leave/rejoin, automatic ICE-restart attempts, and live route/RTT/bitrate/loss statistics are included. Screen sharing replaces the video track; system audio sharing is not implemented.
-
-The relay console shows allocations and traffic counters. **Test relay** verifies authenticated allocation and relay candidate gathering, not end-to-end reachability from a second network. The browser call tests verify actual two-way media.
-
-## TURN Implementation
-
-The server implements the RFC 5389/5766 wire format directly using Node's `dgram`, `net`, `tls`, and `crypto` primitives:
-
-- STUN Binding and XOR-MAPPED-ADDRESS.
-- Long-term MESSAGE-INTEGRITY authentication, signed address-bound nonces, and stale-nonce challenges.
-- Short-lived TURN REST-style HMAC credentials with random session identifiers.
-- Allocate and Refresh, including lifetime-zero deletion and allocation expiry.
-- CreatePermission, IP-scoped permissions, ChannelBind, Send/Data indications, and ChannelData.
-- UDP clients, TCP clients, and optional TLS clients; the relayed peer transport is UDP in all three cases.
-- TCP/TLS stream framing and ChannelData padding, including fragmented/coalesced reads.
-- Transaction response caching, allocation/per-IP quotas, permission/channel limits, bandwidth limits, and bounded request rate-limit state.
-- A public-peer policy that blocks private, loopback, link-local, and multicast destinations by default in production.
-
-Private peers are allowed by default only in development, for same-machine testing. Listener and relay bindings default to loopback when the advertised address is localhost; this keeps UDP response source addresses consistent.
-
-Authentication uses the standard RFC 5766 HMAC-SHA1/MD5 key derivation, not a proprietary cipher. Expired credentials cannot create new allocations, but an already authenticated allocation can continue refreshing during a long call. New ICE restarts obtain fresh credentials.
-
-Allocations live for at most 600 seconds between refreshes, permissions for 300 seconds, channels for 600 seconds, and cached transaction responses for 40 seconds. Closing a TCP/TLS client removes its allocation immediately. Abandoned UDP allocations expire on their timer; gathering a test candidate can temporarily consume an allocation.
-
-## Deploy For Real Calls
-
-Use a server with a reachable public IPv4 address. All environment variables are listed in [.env.example](.env.example). Build and run:
+Open **http://localhost:5180** in two browsers. Local defaults: TURN `3490` UDP/TCP, relay IP `127.0.0.1`, allocation range `49160-49259`, and Automatic ICE. A localhost relay is reachable only from the same machine.
 
 ```sh
-npm ci
+npm run dev -- --configure
+npm run dev -- --help
+npm run dev -- --turn custom-turn --port 5190 --ice relay
+npm run dev -- --turn metered
+```
+
+Metered mode requires provider credentials in the ignored `.env` file. No credential is accepted through CLI flags. The preferred pair is `METERED_REALTIME_KEY_ID` and `METERED_REALTIME_SECRET`; enable TURN injection and channel-scoped publish/subscribe/presence on `mediacall/*`. See [Deployment](doc/deployment.md) for all flags, configuration, safe credential setup, LAN/public networking and alternate modes.
+
+## Architecture
+
+```text
+src/client/
+  components/       Media, session, dialogs, relay console, live stats, UI primitives
+  hooks/            Call lifecycle, workspace workflow, audio, stats, relay locations
+  signaling/        Local WebSocket, hosted HTTP, official Metered SDK adapters
+  media/            Media error normalization
+  services/         Call API and invitation boundaries
+  webrtc/           Pure stats collector and relay probe
+  styles/           Ordered modular CSS
+src/server/
+  config/           CLI/environment parsing and validation
+  custom-turn/      Wire protocol, authentication, allocation and relay sockets
+  hosted/           Managed token API, TURN REST, SQL signaling, external proxy
+  http/             Request handlers, response/auth helpers, headers, assets, limits
+  network/          Relay IP location metadata
+  providers/        Local relay construction/shutdown
+  signaling/        Persistent local two-party WebSocket rooms
+src/shared/         Client/server contracts
+api/                Vercel function entry
+tests/unit/         Unit/socket/integration tests, outside production source
+tests/e2e/          Reproducible local browser regressions
+tests/live/         Actual Vercel/provider smoke tests
+doc/                Technical architecture, protocols, deployment and diagnostics
+```
+
+See [Architecture](doc/architecture.md) and [Call Flow](doc/call-flow.md) for sequence diagrams, module ownership and trust boundaries.
+
+## Hosted And Custom Modes
+
+| Mode | Signaling | Relay |
+| --- | --- | --- |
+| Public Vercel | Metered managed WSS, tokens minted by Vercel | Metered Open Relay |
+| Local `--turn metered` | Same managed SDK path, or local WSS with TURN REST config | Metered Open Relay |
+| Local/self-hosted `--turn custom-turn` | Local persistent WebSocket process | Repository custom-turn |
+
+Vercel cannot expose the custom server's raw UDP allocation ports. Switching to hosted mode does not turn the custom implementation into a hosted service; the UI names the actual provider.
+
+### Vercel Setup
+
+Set these Production environment variables directly in Vercel, not chat or source control:
+
+| Variable | Value |
+| --- | --- |
+| `CALL_BACKEND` | `hosted` |
+| `METERED_REALTIME_KEY_ID` | Your provider key ID |
+| `METERED_REALTIME_SECRET` | Sensitive signing secret |
+| `METERED_CHANNEL_PREFIX` | Optional; defaults to `mediacall/` |
+| `APP_ACCESS_TOKEN` | Optional shared call-entry gate |
+
+```sh
 npm run build
-npm start
+npx vercel --prod --scope williyam
+npm run test:live
 ```
 
-Set these environment values before starting production:
+Check current free-provider quotas in the dashboard. The app does not enable paid plans or automatic upgrades. A health response means configured, not verified media reachability. Shared secrets disclosed anywhere should be revoked and replaced; ordinary rotation may preserve a grace period.
 
-| Variable                     | Value                                                                         |
-| ---------------------------- | ----------------------------------------------------------------------------- |
-| `TURN_PUBLIC_IP`           | The relay server's real public IPv4 address, not localhost                    |
-| `TURN_BIND_IP`             | The local IPv4 interface, or `0.0.0.0` on a single-interface/NAT deployment |
-| `TURN_RELAY_BIND_IP`       | The local IPv4 interface used for allocated UDP ports                         |
-| `TURN_HOST`                | Optional DNS hostname resolving to the public IPv4 address                    |
-| `TURN_PORT`                | Usually `3478` in production; development defaults to `3490`              |
-| `TURN_SECRET`              | At least 32 cryptographically random characters                               |
-| `APP_ACCESS_TOKEN`         | At least 24 random characters; entered in both browsers' call settings        |
-| `APP_ORIGIN`               | The exact web origin, such as `https://call.example.com`                    |
-| `TURN_ALLOW_PRIVATE_PEERS` | `false` for an Internet-facing relay                                        |
+### Self-Hosted custom-turn
 
-Generate independent secrets locally, for example with `openssl rand -hex 32`. Do not reuse the example placeholder strings as secrets. Access tokens stay in browser memory, are not included in invite links, and are required for both credential issuance and room joins when configured.
-
-Put the HTTP server behind an HTTPS reverse proxy that preserves `Host` and forwards WebSocket upgrades for `/signal`. For example, Caddy can terminate the web application's HTTPS:
-
-```caddyfile
-call.example.com {
-    reverse_proxy 127.0.0.1:5180
-}
+```sh
+npm run build
+npm start -- --turn custom-turn
 ```
 
-Web HTTPS and TURN TLS are separate listeners. To enable native TURN-over-TLS, set `TURN_TLS_CERT`, `TURN_TLS_KEY`, and optionally `TURN_TLS_PORT` (default 5349). Use a trusted PEM certificate matching `TURN_HOST`; self-signed browser certificates are not a production solution.
+Production requires an actual public relay IPv4, a strong TURN_SECRET, web HTTPS, correct interface binding, access-token protection or explicit anonymous opt-in, and open TURN listener/UDP allocation ports. An HTTP tunnel alone does not publish TURN allocations. See [Deployment](doc/deployment.md).
 
-Open/map these ports:
+## Verify The Demo
 
-| Port                                | Protocol    | Purpose                  |
-| ----------------------------------- | ----------- | ------------------------ |
-| `443`                             | TCP         | HTTPS/WSS reverse proxy  |
-| `3478` or configured TURN port    | UDP and TCP | TURN/STUN listener       |
-| `5349` or configured TLS port     | TCP         | Optional native TURN TLS |
-| `49160-49259` or configured range | UDP         | Allocated relay sockets  |
+1. Open the live application in two devices/browsers and create/join a room.
+2. Leave Automatic selected to allow normal ICE path selection, or choose Force TURN before entering to require the relay.
+3. Confirm received audio/video in both directions.
+4. Open Relay console. In forced mode, verify Relay only, `relay / relay`, actual allocated endpoints, and increasing byte/frame counters.
+5. View live bitrate/latency/loss samples and optionally download a diagnostics snapshot.
 
-If the server is behind NAT, preserve every allocated relay port in the public-to-private mapping. `TURN_PUBLIC_IP` is the externally advertised address, not necessarily a local bind address. UDP cannot be carried by a normal HTTP reverse proxy or a TCP-only SSH forward. On a multi-interface machine, explicitly select the listener interface to avoid mismatched UDP source addresses.
+The allocation probe is useful but does not replace the two-peer media test. Approximate GeoIP refers to a relay address, not the person's physical location. Browser-redacted metadata remains unavailable.
 
-Production refuses a missing public address, a short/missing TURN secret, or unprotected credential issuance. `ALLOW_ANONYMOUS=true` is an explicit opt-in for an anonymous deployment, **not recommended on the public Internet**. The shared access token is a basic deployment gate, not a complete account, billing, or abuse-prevention system.
-
-## Verify
+## Tests
 
 ```sh
 npm test
 npm run build
 npx playwright install chromium
 npm run test:call
+npm run test:live
 ```
 
-The server suite uses real UDP, TCP, and TLS sockets, the RFC 5769 integrity/fingerprint vector, forged-auth/unsigned-attribute cases, permission enforcement, quota checks, two-member room policy, and authenticated production APIs. OpenSSL is required to generate the ephemeral self-signed TLS test fixture; no test private key is committed.
+Unit/socket tests include RFC vectors, UDP/TCP/TLS relay lifecycles, authentication, validation, quotas, CLI startup, signaling races, stats calculations, and safe location lookup. Browser tests cover direct and forced-relay media, microphone-only calls, controls, screen-track replacement, managed signaling, diagnostics, exports, and responsive layouts. The live suite exercises the deployed provider without a local server. It consumes small amounts of real provider quota.
 
-Playwright uses two independent Chromium contexts with synthetic camera/microphone devices. It checks direct video, UDP-only forced TURN video, TCP-only forced TURN video, decoded audio without camera capture, relay enforcement when the guest chooses it, media controls, track replacement, hangup, permission errors, and fixed desktop/mobile/narrow viewports. Selected ICE pairs and media screenshots are attached to the test results. Screen-share replacement is tested with a canvas capture stream, not the operating system's native share picker.
+OpenSSL generates ephemeral TLS test certificates. PGlite supplies isolated PostgreSQL behavior. Browser tests use synthetic media; native OS share pickers and every NAT/browser combination are not certified. Test artifacts are ignored and may contain private runtime network information.
 
-## Code
+## Technical Docs
 
-- [src/server/turn/protocol.ts](src/server/turn/protocol.ts): STUN framing, XOR addresses, integrity, fingerprints.
-- [src/server/turn/server.ts](src/server/turn/server.ts): allocation ownership and relay data path.
-- [src/server/turn/auth.ts](src/server/turn/auth.ts): credentials and nonce signatures.
-- [src/server/signaling.ts](src/server/signaling.ts): bounded two-person rooms and room-wide relay policy.
-- [src/server/index.ts](src/server/index.ts): listeners, APIs, production gates, static serving.
-- [src/client/useCall.ts](src/client/useCall.ts): WebRTC negotiation, devices, media, stats, ICE restart.
-- [src/client/App.tsx](src/client/App.tsx): the call workspace and relay console.
+- [Documentation Index](doc/README.md)
+- [custom-turn Allocation, Mapping, Permissions And Channels](doc/custom-turn.md)
+- [Architecture](doc/architecture.md)
+- [Call Flow](doc/call-flow.md)
+- [Deployment And Environment Reference](doc/deployment.md)
+- [Live Diagnostics Definitions](doc/diagnostics.md)
+- [API And Security](doc/api-and-security.md)
+- [Testing](doc/testing.md)
+
+## Scope And Limits
+
+The app implements one-to-one calls, not multiparty conferencing, recording, persistent user accounts or cryptographically verified participant identities. Managed room capacity is enforced by the app's presence roster, not a provider-level channel subscriber cap. Managed connection tokens last one hour; rejoin after signaling/token closure. Rate buckets are bounded but mostly process-local, not a complete distributed abuse-control system.
+
+custom-turn currently supports IPv4 UDP peer allocations and UDP/TCP/TLS clients. IPv6 allocations, TCP peer allocations, mobility, even-port reservations, OAuth and SHA-256 STUN integrity are not implemented. It has not been independently security-audited, interoperability-certified, or shown to outperform coturn. The [custom-turn technical document](doc/custom-turn.md) details exact behavior and limits.
