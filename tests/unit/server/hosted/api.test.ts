@@ -88,6 +88,10 @@ test('Metered signing-key mode works without a database or TURN REST API key and
   assert.equal((await fetch(`${base}/api/health`)).status, 200);
   const ice = await (await fetch(`${base}/api/ice`)).json() as { signalingTransport: string };
   assert.equal(ice.signalingTransport, 'metered');
+  const privateLocation = await fetch(`${base}/api/network?ip=127.0.0.1`);
+  assert.equal(privateLocation.status, 200);
+  assert.equal((await privateLocation.json() as { status: string }).status, 'private');
+  assert.equal((await fetch(`${base}/api/network?ip=https://localhost`)).status, 400);
   const request = { roomId: 'a-valid-test-room-1234', name: 'Alex', mode: 'relay' };
   const invalid = await fetch(`${base}/api/realtime`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://attacker.invalid' }, body: JSON.stringify(request) });
   assert.equal(invalid.status, 403);

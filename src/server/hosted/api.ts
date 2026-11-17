@@ -9,6 +9,7 @@ import { IpLimiter } from '../http/limits.ts';
 import type { AppConfig, IceConfig, RelayStats } from '../../shared/types.ts';
 import { meteredSigningOptions, mintMeteredToken } from './metered.ts';
 import type { MeteredConnectToken, MeteredSigningOptions } from './metered.ts';
+import { createNetworkApi } from '../network/location.ts';
 
 interface HostedApiOptions {
   store: RoomStore | undefined;
@@ -46,6 +47,7 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
 }
 
 export function createHostedApi(options: HostedApiOptions) {
+  const network = createNetworkApi(options.accessToken);
   const limit = new IpLimiter(150, 15);
   const credentialsLimit = new IpLimiter(12, 0.1);
   let cachedIce: { configuration: IceConfig; until: number } | undefined;
@@ -61,7 +63,7 @@ export function createHostedApi(options: HostedApiOptions) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     try {
       const url = new URL(request.url ?? '/', 'https://frontend.invalid');
-      if (!['/api/config', '/api/health', '/api/ice', '/api/relay', '/api/signal', '/api/realtime'].includes(url.pathname)) { json(response, 404, { error: 'Not found.' }); return; }
+      if (!['/api/config', '/api/health', '/api/ice', '/api/relay', '/api/signal', '/api/realtime', '/api/network'].includes(url.pathname)) { json(response, 404, { error: 'Not found.' }); return; }
       const signaling = url.pathname === '/api/signal';
       const realtime = url.pathname === '/api/realtime';
       if (realtime && request.method !== 'POST' || !realtime && request.method !== 'GET' && !(signaling && request.method === 'POST')) {
@@ -121,6 +123,7 @@ export function createHostedApi(options: HostedApiOptions) {
       }
       const authorization = request.headers.authorization;
       if (!validAccessToken(authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined, options.accessToken)) throw new SignalError('unauthorized', 'Enter the server access token in settings.', 401);
+      if (url.pathname === '/api/network') { await network(request, response); return; }
       if (url.pathname === '/api/ice') {
         if (!credentialsLimit.take(address)) throw new SignalError('credential-limit', 'Credential limit reached. Try again shortly.', 429);
         if (options.realtime) {

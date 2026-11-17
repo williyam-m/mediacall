@@ -55,3 +55,17 @@ export interface RelayStats {
   dropped: number | null;
   authFailures: number | null;
 }
+
+export interface RelayLocation {
+  ip: string;
+  status: 'located' | 'private' | 'unavailable';
+  country: string | null;
+  countryCode: string | null;
+  region: string | null;
+  city: string | null;
+  asn: number | null;
+  organization: string | null;
+  timezone: string | null;
+  approximate: true;
+  source: 'ipwho.is' | null;
+}

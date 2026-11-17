@@ -72,6 +72,15 @@ async function connectPair(browser: Browser, mode: 'auto' | 'relay', audio = fal
     await expect(second.getByTestId('call-status')).toHaveText('Connected');
     return { first, second, close: async () => { for (const context of contexts) await context.close(); } };
   } catch (cause) {
+    for (const context of contexts) for (const page of context.pages()) {
+      const evidence = await page.evaluate(async () => Promise.all((window as InstrumentedWindow).testConnections.map(async (connection) => {
+        const report = await connection.getStats();
+        const candidates: unknown[] = [];
+        report.forEach((entry) => { if (['local-candidate', 'remote-candidate', 'candidate-pair'].includes(entry.type)) candidates.push(entry); });
+        return { connection: connection.connectionState, ice: connection.iceConnectionState, signaling: connection.signalingState, candidates };
+      }))).catch(() => []);
+      await test.info().attach('ice-failure-state', { body: JSON.stringify(evidence), contentType: 'application/json' });
+    }
     for (const context of contexts) await context.close();
     throw cause;
   }

@@ -4,10 +4,12 @@ import { IpLimiter } from './limits.ts';
 import type { StartupConfig } from '../config/startup.ts';
 import type { LocalRelayProvider } from '../providers/local.ts';
 import type { AppConfig } from '../../shared/types.ts';
+import { createNetworkApi } from '../network/location.ts';
 
 export function createLocalApi(config: StartupConfig, relay: LocalRelayProvider) {
   const requests = new IpLimiter(120, 4);
   const credentials = new IpLimiter(20, 0.25);
+  const network = createNetworkApi(config.accessToken);
   return async (request: IncomingMessage, response: ServerResponse) => {
     const address = request.socket.remoteAddress ?? '';
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -18,6 +20,7 @@ export function createLocalApi(config: StartupConfig, relay: LocalRelayProvider)
     }
     if (pathname === '/api/health') { json(response, 200, { status: 'ok', relay: relay.stats().status, provider: config.provider }); return; }
     if (!authorized(request, config.accessToken)) { json(response, 401, { error: 'Enter the server access token in settings.' }); return; }
+    if (pathname === '/api/network') { await network(request, response); return; }
     if (pathname === '/api/ice') {
       if (!credentials.take(address)) { json(response, 429, { error: 'Credential limit reached. Try again shortly.' }); return; }
       json(response, 200, await relay.ice()); return;

@@ -2,22 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { CallMode, ClientSignal, IceConfig, MediaState, PeerInfo, ServerSignal } from '../../shared/types.ts';
 import { createSignalingConnection } from '../signaling/connection.ts';
 import type { SignalingConnection } from '../signaling/connection.ts';
+import { useAudioLevel } from './useAudioLevel.ts';
+import { useConnectionStats } from './useConnectionStats.ts';
+import { fetchIce } from '../services/callApi.ts';
+import { mediaError } from '../media/errors.ts';
+import { testRelay } from '../webrtc/relayProbe.ts';
+export type { ConnectionStats } from '../webrtc/stats.ts';
 
 export type CallStatus = 'idle' | 'preparing' | 'waiting' | 'connecting' | 'connected' | 'reconnecting' | 'ended' | 'error';
-
-export interface ConnectionStats {
-  route: 'direct' | 'relay' | 'pending';
-  protocol: string;
-  rtt: number;
-  bitrate: number;
-  loss: number;
-  resolution: string;
-  codec: string;
-  localCandidateType: string;
-  remoteCandidateType: string;
-  bytesSent: number;
-  bytesReceived: number;
-}
 
 interface StartOptions {
   roomId: string;
@@ -38,47 +30,6 @@ interface Session {
   restarts: number;
 }
 
-const EMPTY_STATS: ConnectionStats = { route: 'pending', protocol: '--', rtt: 0, bitrate: 0, loss: 0, resolution: '--', codec: '--', localCandidateType: '--', remoteCandidateType: '--', bytesSent: 0, bytesReceived: 0 };
-
-export async function fetchIce(accessToken: string): Promise<IceConfig> {
-  const response = await fetch('/api/ice', { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}, cache: 'no-store' });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? 'The relay configuration is unavailable.');
-  }
-  return response.json() as Promise<IceConfig>;
-}
-
-function mediaError(error: unknown): string {
-  if (error instanceof DOMException) {
-    if (error.name === 'NotAllowedError') return 'Camera or microphone access was denied. Check your browser permissions, or try an audio call.';
-    if (error.name === 'NotFoundError') return 'No matching camera or microphone was found. Connect a device or try an audio call.';
-    if (error.name === 'NotReadableError') return 'Your camera or microphone is in use by another application.';
-  }
-  return error instanceof Error ? error.message : 'Unable to start the call.';
-}
-
-function useAudioLevel(stream: MediaStream | null) {
-  const [level, setLevel] = useState(0);
-  useEffect(() => {
-    if (!stream?.getAudioTracks().length) { setLevel(0); return; }
-    const context = new AudioContext();
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 256;
-    const source = context.createMediaStreamSource(stream);
-    source.connect(analyser);
-    const samples = new Uint8Array(analyser.frequencyBinCount);
-    const timer = setInterval(() => {
-      analyser.getByteFrequencyData(samples);
-      const average = samples.reduce((total, value) => total + value, 0) / samples.length;
-      setLevel(Math.min(1, average / 80));
-    }, 100);
-    context.resume().catch(() => {});
-    return () => { clearInterval(timer); source.disconnect(); context.close().catch(() => {}); };
-  }, [stream]);
-  return level;
-}
-
 export function useCall() {
   const [status, setStatus] = useState<CallStatus>('idle');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -95,7 +46,6 @@ export function useCall() {
   const remoteLevel = useAudioLevel(remoteStream);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [stats, setStats] = useState<ConnectionStats>(EMPTY_STATS);
   const [events, setEvents] = useState<{ id: string; time: number; text: string }[]>([]);
   const local = useRef<MediaStream | null>(null);
   const display = useRef<MediaStream | null>(null);
@@ -107,8 +57,7 @@ export function useCall() {
   const selectedDevices = useRef({ audio: '', video: '' });
   const generation = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previousBytes = useRef({ time: 0, bytes: 0 });
-  const reportedRoute = useRef('pending');
+  const { stats, history, resetStats } = useConnectionStats(connection, (route) => log(route === 'relay' ? 'Media routed through TURN relay' : 'Direct peer connection selected'));
 
   function log(text: string) {
     setEvents((entries) => [...entries.slice(-7), { id: crypto.randomUUID(), time: Date.now(), text }]);
@@ -158,10 +107,8 @@ export function useCall() {
     connection.current = null;
     previous?.close();
     pendingIce.current = [];
-    previousBytes.current = { time: 0, bytes: 0 };
-    reportedRoute.current = 'pending';
     setRemoteStream(null);
-    setStats(EMPTY_STATS);
+    resetStats();
   }
 
   function closeSession() {
@@ -463,42 +410,6 @@ export function useCall() {
     }
   }
 
-  async function testRelay(accessToken: string) {
-    const ice = await fetchIce(accessToken);
-    let signaling: SignalingConnection | undefined;
-    let probe: RTCPeerConnection | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      if (ice.signalingTransport === 'metered') {
-        signaling = createSignalingConnection(ice);
-        await new Promise<void>((resolve, reject) => {
-          timer = setTimeout(() => reject(new Error('Managed relay setup timed out. Check the signing key and TURN injection setting.')), 12_000);
-          signaling!.onopen = () => signaling!.send(JSON.stringify({ type: 'join', roomId: crypto.randomUUID().replaceAll('-', ''), name: 'Relay probe', mode: 'relay', accessToken } satisfies ClientSignal));
-          signaling!.onmessage = (event) => {
-            const message = JSON.parse(event.data) as ServerSignal;
-            if (message.type === 'joined') { clearTimeout(timer); resolve(); }
-            else if (message.type === 'error') { clearTimeout(timer); reject(new Error(message.message)); }
-          };
-          signaling!.onerror = signaling!.onclose = () => { clearTimeout(timer); reject(new Error('Unable to connect to managed signaling.')); };
-        });
-      }
-      const currentProbe = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: 'relay' });
-      probe = currentProbe;
-      const result = new Promise<string>((resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('No relay candidate. Check the TURN host, credentials, and firewall.')), 10_000);
-        currentProbe.onicecandidate = (event) => {
-          if (event.candidate?.type === 'relay') {
-            clearTimeout(timer);
-            resolve(`${event.candidate.address}:${event.candidate.port} / ${event.candidate.protocol?.toUpperCase() ?? 'UDP'}`);
-          }
-        };
-      });
-      currentProbe.createDataChannel('allocation-test');
-      await currentProbe.setLocalDescription(await currentProbe.createOffer());
-      return await result;
-    } finally { if (timer) clearTimeout(timer); probe?.close(); signaling?.close(); }
-  }
-
   useEffect(() => {
     refreshDevices().catch(() => {});
     const handler = () => { refreshDevices().catch(() => {}); };
@@ -511,58 +422,13 @@ export function useCall() {
     };
   }, []);
 
-  useEffect(() => {
-    const timer = setInterval(async () => {
-      const current = connection.current;
-      if (!current || current.connectionState !== 'connected') return;
-      try {
-        const report = await current.getStats();
-        if (connection.current !== current) return;
-        let pair: Record<string, unknown> | undefined;
-        report.forEach((entry) => {
-          if (entry.type === 'transport' && entry.selectedCandidatePairId) pair = report.get(entry.selectedCandidatePairId) as Record<string, unknown>;
-        });
-        if (!pair) report.forEach((entry) => { if (entry.type === 'candidate-pair' && entry.state === 'succeeded' && entry.nominated) pair = entry as Record<string, unknown>; });
-        const candidate = pair ? report.get(String(pair['localCandidateId'])) : undefined;
-        const remoteCandidate = pair ? report.get(String(pair['remoteCandidateId'])) : undefined;
-        const route = pair ? (candidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay' ? 'relay' : 'direct') : 'pending';
-        let bytes = 0;
-        let received = 0;
-        let lost = 0;
-        let resolution = '--';
-        let codec = '--';
-        report.forEach((entry) => {
-          if (entry.type === 'inbound-rtp') {
-            bytes += Number(entry.bytesReceived ?? 0);
-            received += Number(entry.packetsReceived ?? 0);
-            lost += Math.max(0, Number(entry.packetsLost ?? 0));
-            if (entry.kind === 'video' && entry.frameWidth) {
-              resolution = `${entry.frameWidth} x ${entry.frameHeight}`;
-              codec = String(report.get(entry.codecId)?.mimeType ?? '--').replace('video/', '');
-            }
-          }
-        });
-        const now = performance.now();
-        const previous = previousBytes.current;
-        const bitrate = previous.time && bytes >= previous.bytes ? (bytes - previous.bytes) * 8 / (now - previous.time) : 0;
-        previousBytes.current = { time: now, bytes };
-        setStats({
-          route, protocol: String(candidate?.relayProtocol ?? candidate?.protocol ?? '--').toUpperCase(), rtt: Number(pair?.['currentRoundTripTime'] ?? 0) * 1000,
-          bitrate, loss: received + lost ? lost / (received + lost) * 100 : 0, resolution, codec,
-          localCandidateType: String(candidate?.candidateType ?? '--'), remoteCandidateType: String(remoteCandidate?.candidateType ?? '--'),
-          bytesSent: Number(pair?.['bytesSent'] ?? 0), bytesReceived: Number(pair?.['bytesReceived'] ?? 0),
-        });
-        if (route !== 'pending' && route !== reportedRoute.current) { reportedRoute.current = route; log(route === 'relay' ? 'Media routed through TURN relay' : 'Direct peer connection selected'); }
-      } catch {}
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   return {
     status, localStream, remoteStream, displayStream, peer, roomId, mode, error, micEnabled, cameraEnabled,
-    isSharing, level, remoteLevel, devices, startedAt, stats, events,
+    isSharing, level, remoteLevel, devices, startedAt, stats, history, events,
     start, hangup, preview, toggleMic, toggleCamera, toggleSharing, switchDevice, refreshDevices,
     reconnect: () => reconnect().catch((cause: unknown) => setError(mediaError(cause))), testRelay,
     clearError: () => setError(null),
   };
 }
+
+export type CallController = ReturnType<typeof useCall>;

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { IceConfig } from '../../shared/types.ts';
 
-const ROUTES = new Set(['/api/config', '/api/health', '/api/ice', '/api/relay']);
+const ROUTES = new Set(['/api/config', '/api/health', '/api/ice', '/api/relay', '/api/network']);
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
