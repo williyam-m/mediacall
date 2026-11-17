@@ -41,7 +41,9 @@ export function createCallApiProxy(origin: string | undefined, fetchBackend: typ
     const headers = new Headers({ Accept: 'application/json' });
     if (request.headers.authorization) headers.set('Authorization', request.headers.authorization);
     try {
-      const upstream = await fetchBackend(new URL(pathname, backend), {
+      const target = new URL(pathname, backend);
+      if (pathname === '/api/network') target.searchParams.set('ip', new URL(request.url ?? '/', 'https://frontend.invalid').searchParams.get('ip') ?? '');
+      const upstream = await fetchBackend(target, {
         method: 'GET', headers, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(8000),
       });
       if (upstream.status >= 300 && upstream.status < 400) throw new Error('Backend redirects are not allowed');

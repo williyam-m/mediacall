@@ -11,7 +11,8 @@
     "start": "node --env-file-if-exists=.env src/server/index.ts --production",
     "build": "tsc --noEmit && vite build",
     "test": "node --test \"tests/unit/**/*.test.ts\"",
-    "test:call": "playwright test"
+    "test:call": "playwright test",
+    "test:live": "playwright test --config playwright.live.config.ts"
   },
   "dependencies": {
     "@metered-ca/realtime": "^1.2.1",

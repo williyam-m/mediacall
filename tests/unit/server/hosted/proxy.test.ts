@@ -81,3 +81,15 @@ test('Vercel API bridge hides upstream transport errors, redirects, and malforme
     assert.doesNotMatch(text, /Internal network|Unexpected error|untrusted/);
   }
 });
+
+test('relay location proxy forwards only the IP query to the configured backend', async (context) => {
+  const server = createServer(createCallApiProxy('https://backend.example.com', async (input) => {
+    assert.equal(String(input), 'https://backend.example.com/api/network?ip=8.8.8.8');
+    return Response.json({ ip: '8.8.8.8', status: 'located' });
+  }));
+  context.after(() => close(server));
+  const base = await listen(server);
+  const response = await fetch(`${base}/api/network?ip=8.8.8.8&destination=https://untrusted.invalid`);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { ip: string }).ip, '8.8.8.8');
+});
